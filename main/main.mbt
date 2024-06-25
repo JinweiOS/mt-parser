@@ -61,7 +61,6 @@ fn pchar(predicate : (Char) -> Bool) -> Lexer[Char] {
   Lexer(
     fn(input) {
       if input.length() > 0 && predicate(input[0]) {
-        debug(input.length())
         Some((input[0], input.substring(start=1, end=input.length())))
       } else {
         None
@@ -254,7 +253,7 @@ let minus : Parser[Token] = ptoken(
 
 let multiply : Parser[Token] = ptoken(
   fn {
-    Minus => true
+    Multiply => true
     _ => false
   },
 )
@@ -286,7 +285,17 @@ fn parser() -> Parser[Expression] {
   // combine = atomic * ( ("*" / "/") atomic )
   let combine = automic.and(multiply.or(divide).and(automic).many()).map(
     fn {
-      (expr, list) =>
+      (expr, list) => {
+        debug(expr)
+        debug(
+          list.fold_left(
+            fn {
+              e, (Multiply, expr) => Expression::Multiply(e, expr)
+              e, (_, expr) => Expression::Divide(e, expr)
+            },
+            init=expr,
+          ),
+        )
         list.fold_left(
           fn {
             e, (Multiply, expr) => Expression::Multiply(e, expr)
@@ -294,6 +303,7 @@ fn parser() -> Parser[Expression] {
           },
           init=expr,
         )
+      }
     },
   )
 
@@ -313,174 +323,174 @@ fn parser() -> Parser[Expression] {
   ref(expression_ref)
 }
 
-trait Expr {
-  number(Int) -> Self
-  op_add(Self, Self) -> Self
-  op_sub(Self, Self) -> Self
-  op_mul(Self, Self) -> Self
-  op_div(Self, Self) -> Self
-}
-
-fn Expression::number(i : Int) -> Expression {
-  Number(i)
-}
-
-fn Expression::op_add(a : Expression, b : Expression) -> Expression {
-  Plus(a, b)
-}
-
-fn Expression::op_sub(a : Expression, b : Expression) -> Expression {
-  Minus(a, b)
-}
-
-fn Expression::op_mul(a : Expression, b : Expression) -> Expression {
-  Multiply(a, b)
-}
-
-fn Expression::op_div(a : Expression, b : Expression) -> Expression {
-  Divide(a, b)
-}
-
-// 语义：计算表达式
-type BoxedInt Int derive(Debug)
-
-fn BoxedInt::number(i : Int) -> BoxedInt {
-  BoxedInt(i)
-}
-
-fn BoxedInt::op_add(a : BoxedInt, b : BoxedInt) -> BoxedInt {
-  BoxedInt(a.0 + b.0)
-}
-
-fn BoxedInt::op_sub(a : BoxedInt, b : BoxedInt) -> BoxedInt {
-  BoxedInt(a.0 - b.0)
-}
-
-fn BoxedInt::op_mul(a : BoxedInt, b : BoxedInt) -> BoxedInt {
-  BoxedInt(a.0 * b.0)
-}
-
-fn BoxedInt::op_div(a : BoxedInt, b : BoxedInt) -> BoxedInt {
-  BoxedInt(a.0 / b.0)
-}
-
-// 语义：输出表达式
-struct BoxedString {
-  str : String
-  level : Int
-} derive(Debug)
-
-fn BoxedString::number(i : Int) -> BoxedString {
-  { str: i.to_string(), level: 0 }
-}
-
-fn BoxedString::op_add(a : BoxedString, b : BoxedString) -> BoxedString {
-  let stra = a.str
-  let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
-  { str: "\(stra) + \(strb)", level: 1 }
-}
-
-fn BoxedString::op_sub(a : BoxedString, b : BoxedString) -> BoxedString {
-  let stra = a.str
-  let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
-  { str: "\(stra) - \(strb)", level: 1 }
-}
-
-fn BoxedString::op_mul(a : BoxedString, b : BoxedString) -> BoxedString {
-  let stra = if a.level == 1 { "(" + a.str + ")" } else { a.str }
-  let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
-  { str: "\(stra) * \(strb)", level: 2 }
-}
-
-fn BoxedString::op_div(a : BoxedString, b : BoxedString) -> BoxedString {
-  let stra = if a.level == 1 { "(" + a.str + ")" } else { a.str }
-  let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
-  { str: "\(stra) / \(strb)", level: 2 }
-}
-
-fn recursive_parser_with_tagless_final[E : Expr]() -> Parser[E] {
-  let number : Parser[E] = ptoken(
-    fn {
-      Value(_) => true
-      _ => false
-    },
-  ).map(fn { Value(i) => E::number(i) })
-  fn atomic(tokens : @immut/list.List[Token]) -> (E, @immut/list.List[Token])? {
-    lparen.and(Parser(expression)).and(rparen).map(
-      fn { ((_, expr), _) => expr },
-    ).or(number).parse(tokens)
-  }
-
-  fn combine(
-    tokens : @immut/list.List[Token]
-  ) -> (E, @immut/list.List[Token])? {
-    (Parser(atomic) : Parser[E]).and(
-      multiply.or(divide).and(Parser(atomic)).many(),
-    ).map(
-      fn {
-        (e, list) =>
-          list.fold_left(
-            fn {
-              e, (Multiply, expr) => e * expr
-              e, (_, expr) => e / expr
-            },
-            init=e,
-          )
-      },
-    ).parse(tokens)
-  }
-
-  fn expression(
-    tokens : @immut/list.List[Token]
-  ) -> (E, @immut/list.List[Token])? {
-    (Parser(combine) : Parser[E]).and(
-      plus.or(minus).and(Parser(combine)).many(),
-    ).map(
-      fn {
-        (e, list) =>
-          list.fold_left(
-            fn {
-              e, (Plus, expr) => e + expr
-              e, (_, expr) => e - expr
-            },
-            init=e,
-          )
-      },
-    ).parse(tokens)
-  }
-
-  Parser(expression)
-}
-
 fn parse_string(str : String) -> (Expression, String, @immut/list.List[Token])? {
   let (token_list, rest_string) = tokens.parse(str)?
   let (expr, rest_token) = parser().parse(token_list)?
   Some((expr, rest_string, rest_token))
 }
 
-fn parse_string_tagless_final[E : Expr](
-  str : String
-) -> (E, String, @immut/list.List[Token])? {
-  let (token_list, rest_string) = tokens.parse(str)?
-  let (expr, rest_token) : (E, @immut/list.List[Token]) = recursive_parser_with_tagless_final().parse(
-    token_list,
-  )?
-  Some((expr, rest_string, rest_token))
-}
+// trait Expr {
+//   number(Int) -> Self
+//   op_add(Self, Self) -> Self
+//   op_sub(Self, Self) -> Self
+//   op_mul(Self, Self) -> Self
+//   op_div(Self, Self) -> Self
+// }
+
+// fn Expression::number(i : Int) -> Expression {
+//   Number(i)
+// }
+
+// fn Expression::op_add(a : Expression, b : Expression) -> Expression {
+//   Plus(a, b)
+// }
+
+// fn Expression::op_sub(a : Expression, b : Expression) -> Expression {
+//   Minus(a, b)
+// }
+
+// fn Expression::op_mul(a : Expression, b : Expression) -> Expression {
+//   Multiply(a, b)
+// }
+
+// fn Expression::op_div(a : Expression, b : Expression) -> Expression {
+//   Divide(a, b)
+// }
+
+// 语义：计算表达式
+// type BoxedInt Int derive(Debug)
+
+// fn BoxedInt::number(i : Int) -> BoxedInt {
+//   BoxedInt(i)
+// }
+
+// fn BoxedInt::op_add(a : BoxedInt, b : BoxedInt) -> BoxedInt {
+//   BoxedInt(a.0 + b.0)
+// }
+
+// fn BoxedInt::op_sub(a : BoxedInt, b : BoxedInt) -> BoxedInt {
+//   BoxedInt(a.0 - b.0)
+// }
+
+// fn BoxedInt::op_mul(a : BoxedInt, b : BoxedInt) -> BoxedInt {
+//   BoxedInt(a.0 * b.0)
+// }
+
+// fn BoxedInt::op_div(a : BoxedInt, b : BoxedInt) -> BoxedInt {
+//   BoxedInt(a.0 / b.0)
+// }
+
+// 语义：输出表达式
+// struct BoxedString {
+//   str : String
+//   level : Int
+// } derive(Debug)
+
+// fn BoxedString::number(i : Int) -> BoxedString {
+//   { str: i.to_string(), level: 0 }
+// }
+
+// fn BoxedString::op_add(a : BoxedString, b : BoxedString) -> BoxedString {
+//   let stra = a.str
+//   let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
+//   { str: "\(stra) + \(strb)", level: 1 }
+// }
+
+// fn BoxedString::op_sub(a : BoxedString, b : BoxedString) -> BoxedString {
+//   let stra = a.str
+//   let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
+//   { str: "\(stra) - \(strb)", level: 1 }
+// }
+
+// fn BoxedString::op_mul(a : BoxedString, b : BoxedString) -> BoxedString {
+//   let stra = if a.level == 1 { "(" + a.str + ")" } else { a.str }
+//   let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
+//   { str: "\(stra) * \(strb)", level: 2 }
+// }
+
+// fn BoxedString::op_div(a : BoxedString, b : BoxedString) -> BoxedString {
+//   let stra = if a.level == 1 { "(" + a.str + ")" } else { a.str }
+//   let strb = if b.level == 1 { "(" + b.str + ")" } else { b.str }
+//   { str: "\(stra) / \(strb)", level: 2 }
+// }
+
+// fn recursive_parser_with_tagless_final[E : Expr]() -> Parser[E] {
+//   let number : Parser[E] = ptoken(
+//     fn {
+//       Value(_) => true
+//       _ => false
+//     },
+//   ).map(fn { Value(i) => E::number(i) })
+//   fn atomic(tokens : @immut/list.List[Token]) -> (E, @immut/list.List[Token])? {
+//     lparen.and(Parser(expression)).and(rparen).map(
+//       fn { ((_, expr), _) => expr },
+//     ).or(number).parse(tokens)
+//   }
+
+//   fn combine(
+//     tokens : @immut/list.List[Token]
+//   ) -> (E, @immut/list.List[Token])? {
+//     (Parser(atomic) : Parser[E]).and(
+//       multiply.or(divide).and(Parser(atomic)).many(),
+//     ).map(
+//       fn {
+//         (e, list) =>
+//           list.fold_left(
+//             fn {
+//               e, (Multiply, expr) => e * expr
+//               e, (_, expr) => e / expr
+//             },
+//             init=e,
+//           )
+//       },
+//     ).parse(tokens)
+//   }
+
+//   fn expression(
+//     tokens : @immut/list.List[Token]
+//   ) -> (E, @immut/list.List[Token])? {
+//     (Parser(combine) : Parser[E]).and(
+//       plus.or(minus).and(Parser(combine)).many(),
+//     ).map(
+//       fn {
+//         (e, list) =>
+//           list.fold_left(
+//             fn {
+//               e, (Plus, expr) => e + expr
+//               e, (_, expr) => e - expr
+//             },
+//             init=e,
+//           )
+//       },
+//     ).parse(tokens)
+//   }
+
+//   Parser(expression)
+// }
+
+// fn parse_string_tagless_final[E : Expr](
+//   str : String
+// ) -> (E, String, @immut/list.List[Token])? {
+//   let (token_list, rest_string) = tokens.parse(str)?
+//   let (expr, rest_token) : (E, @immut/list.List[Token]) = recursive_parser_with_tagless_final().parse(
+//     token_list,
+//   )?
+//   Some((expr, rest_string, rest_token))
+// }
 
 fn main {
   println("===第二部分===")
-  debug(parse_string("(307 + 7) + 5 - 3 - 2"))
+  debug(parse_string("1 + 1 * (307 + 7) + 5 - 3 - 2"))
   // debug(
   //   (
   //     parse_string_tagless_final("1 + 1 * (307 + 7) + 5 - 3 - 2") :
   //     (Expression, String, @immut/list.List[Token])?),
   // )
-  debug(
-    (
-      parse_string_tagless_final("(307 + 7) + 5 - 3 - 22") :
-      (BoxedInt, String, @immut/list.List[Token])?),
-  )
+  // debug(
+  //   (
+  //     parse_string_tagless_final("(307 + 7) + 5 - 3 - 22") :
+  //     (BoxedInt, String, @immut/list.List[Token])?),
+  // )
   // debug(
   //   (
   //     parse_string_tagless_final("1 + 1 * (307 + 7) + 5 - 3 - 2") :
